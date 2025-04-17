@@ -1,0 +1,10 @@
+.tox
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info
+build/
+dist/
+.idea/
+bundler_output.py
+logs.txt

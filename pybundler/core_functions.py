@@ -1,9 +1,12 @@
 import importlib.util
 import inspect
+import logging
 import os
 import sys
 import sysconfig
 from types import ModuleType, FunctionType, MethodType
+
+log = logging.getLogger(__name__)
 
 
 def is_virtualenv_path(path):
@@ -50,10 +53,9 @@ def get_stdlib_paths():
         pass
 
     if not stdlib_paths:
-        print("Warning: Could not reliably determine standard library path(s). Filtering might be inaccurate.",
-              file=sys.stderr)
+        log.warning("Could not reliably determine standard library path(s). Filtering might be inaccurate.")
     else:
-        print(f"DEBUG: Identified standard library paths for exclusion: {stdlib_paths}")
+        log.debug("Identified standard library paths for exclusion: %s", stdlib_paths)
 
     # Cache the result in the function object itself
     get_stdlib_paths.stdlib_paths_cache = stdlib_paths
@@ -74,12 +76,12 @@ def get_module_file_path(module_obj):
         mod_file = inspect.getfile(module_obj)
         if not mod_file:
             # E.g., namespace packages might not have a file
-            print(f"DEBUG: Module '{module_obj.__name__}' has no discernible file path.")
+            log.debug("Module '%s' has no discernible file path.", module_obj.__name__)
             return None
         return os.path.normpath(os.path.abspath(mod_file))
     except TypeError:
         # This often happens for built-in modules or C extensions without clear file paths
-        print(f"DEBUG: Module '{module_obj.__name__}' likely built-in or C extension (TypeError on getfile).")
+        log.debug("Module '%s' likely built-in or C extension (TypeError on getfile).", module_obj.__name__)
         return None
 
 
@@ -96,7 +98,7 @@ def is_standard_library(module_obj):
 
     # 1. Check true built-ins first (most reliable)
     if mod_name in sys.builtin_module_names:
-        print(f"DEBUG: Module '{mod_name}' is built-in.")
+        log.debug("Module '%s' is built-in.", mod_name)
         return True
 
     # 2. Get the module's file path
@@ -104,21 +106,24 @@ def is_standard_library(module_obj):
     if mod_file_abs is None:
         return False  # Cannot determine path, assume not stdlib
 
+    if 'site-packages' in mod_file_abs:
+        return False
+
     stdlib_paths = get_stdlib_paths()
     # 3. Check if the module's file path is within any of the identified stdlib directories
     if not stdlib_paths:
-        print(f"Warning: Cannot check stdlib paths for {mod_name}. Assuming non-stdlib.")
+        log.warning("Cannot check stdlib paths for %s. Assuming non-stdlib.", mod_name)
         return False  # Cannot perform check
 
     for std_path in stdlib_paths:
         # Check if the module file is *inside* the standard library path
         # Using startswith is generally safe and efficient
         if mod_file_abs.startswith(std_path + os.sep):
-            print(f"DEBUG: Module '{mod_name}' ({mod_file_abs}) is within standard library path '{std_path}'.")
+            log.debug("Module '%s' (%s) is within standard library path '%s'.", mod_name, mod_file_abs, std_path)
             return True
 
     # 4. If not built-in and not in standard library paths, assume it's local or third-party
-    print(f"DEBUG: Module '{mod_name}' ({mod_file_abs}) considered local or third-party.")
+    log.debug("Module '%s' (%s) considered local or third-party.", mod_name, mod_file_abs)
     return False
 
 
@@ -190,27 +195,18 @@ def parse_target_string(target_str):
     Parses 'path/to/module.py:function_name' into (absolute_path, function_name).
     Returns (None, None) on error.
     """
-    print(f"DEBUG: Parsing target string: {target_str}")
+    log.debug("Parsing target string: %s", target_str)
     if ':' not in target_str:
-        print(f"Error: Target format invalid. Expected 'path/to/module.py:function_name'. Got: {target_str}",
-              file=sys.stderr)
+        log.error("Target format invalid. Expected 'path/to/module.py:function_name'. Got: %s", target_str)
         return None, None
 
     path_str, name = target_str.rsplit(':', 1)
     abs_path = os.path.abspath(path_str)
 
-    # Basic validation - check if path exists *as a file* (can be relaxed if needed)
-    # if not os.path.isfile(abs_path):
-    #      print(f"Warning: Module path '{abs_path}' does not exist or is not a file.", file=sys.stderr)
-    # Decide if this is a hard error or handled during loading
-    # return None, None # Make it an error for now
-
     if not abs_path.endswith(".py"):
-        print(f"Warning: Module path '{abs_path}' does not end with .py.", file=sys.stderr)
-        # Allow non-.py files? Probably not for source analysis.
-        # return None, None # Make it an error for now
+        log.warning("Module path '%s' does not end with .py.", abs_path)
 
-    print(f"DEBUG: Parsed path='{abs_path}', name='{name}'")
+    log.debug("Parsed path='%s', name='%s'", abs_path, name)
     return abs_path, name
 
 
@@ -219,76 +215,58 @@ def load_target_function(module_path, function_name):
     Dynamically loads a module from its path and returns the specified function object.
     Returns None on error. Assumes module_path is absolute.
     """
-    print(f"DEBUG: Loading function '{function_name}' from module '{module_path}'")
+    log.debug("Loading function '%s' from module '%s'", function_name, module_path)
     if not os.path.isfile(module_path):
-        print(f"Error: Module file not found at {module_path}", file=sys.stderr)
+        log.error("Module file not found at %s", module_path)
         return None
 
     try:
-        # Create a unique module name (e.g., based on path) to avoid conflicts
-        # Using filename without extension is common but can collide.
-        # Hashing the path could work, or replacing path separators.
         module_name_from_path = os.path.splitext(os.path.basename(module_path))[0]
-        # A potentially more unique name:
-        # unique_module_name = f"dynload_{module_name_from_path}_{hash(module_path)}"
-        unique_module_name = module_name_from_path  # Keep it simple for now
+        unique_module_name = module_name_from_path
 
         spec = importlib.util.spec_from_file_location(unique_module_name, module_path)
         if spec is None:
-            print(f"Error: Could not create module spec for {module_path}", file=sys.stderr)
+            log.error("Could not create module spec for %s", module_path)
             return None
 
         module = importlib.util.module_from_spec(spec)
         if module is None:
-            print(f"Error: Could not create module from spec for {module_path}", file=sys.stderr)
+            log.error("Could not create module from spec for %s", module_path)
             return None
 
-        # Add module to sys.modules BEFORE executing, crucial for relative imports within the module
-        # if unique_module_name in sys.modules:
-        # print(f"Warning: Module name {unique_module_name} already in sys.modules. Overwriting.")
         sys.modules[unique_module_name] = module
 
-        # Add module's directory to sys.path temporarily to allow imports within that module
         module_dir = os.path.dirname(module_path)
         path_needs_cleanup = False
         if module_dir not in sys.path:
             sys.path.insert(0, module_dir)
             path_needs_cleanup = True
 
-        # Execute the module's code
         spec.loader.exec_module(module)
 
-        # Clean up sys.path if added
         if path_needs_cleanup and sys.path[0] == module_dir:
             sys.path.pop(0)
 
         target_obj = getattr(module, function_name, None)
         if target_obj is None:
-            print(f"Error: Target '{function_name}' not found in module '{module_path}'", file=sys.stderr)
-            # Maybe remove from sys.modules?
-            # if unique_module_name in sys.modules: del sys.modules[unique_module_name]
+            log.error("Target '%s' not found in module '%s'", function_name, module_path)
             return None
 
-        # Add check if it's a function or class (or maybe method directly?)
         if not isinstance(target_obj, (FunctionType, MethodType, type)):
-            print(f"Error: Target '{function_name}' in module '{module_path}' is not a function, method, or class.",
-                  file=sys.stderr)
-            # if unique_module_name in sys.modules: del sys.modules[unique_module_name]
+            log.error("Target '%s' in module '%s' is not a function, method, or class.", function_name, module_path)
             return None
 
-        print(f"DEBUG: Successfully loaded {target_obj}")
+        log.debug("Successfully loaded %s", target_obj)
         return target_obj
 
-    except FileNotFoundError:  # Should be caught by initial check, but belt-and-suspenders
-        print(f"Error: Module file not found at {module_path}", file=sys.stderr)
+    except FileNotFoundError:
+        log.error("Module file not found at %s", module_path)
         return None
     except SyntaxError as e:
-        print(f"Error: Syntax error in module {module_path}: {e}", file=sys.stderr)
-        # if unique_module_name in sys.modules: del sys.modules[unique_module_name] # Clean up failed load
+        log.error("Syntax error in module %s: %s", module_path, e)
         return None
     except Exception as e:
-        print(f"Error loading module or function from {module_path}: {type(e).__name__} - {e}", file=sys.stderr)
-        # if unique_module_name in sys.modules: del sys.modules[unique_module_name] # Clean up failed load
+        log.error("Error loading module or function from %s: %s - %s", module_path, type(e).__name__, e)
         return None
 
 
@@ -302,14 +280,11 @@ def get_object_source(obj):
         file_path = inspect.getsourcefile(obj)
         start_line = inspect.getsourcelines(obj)[1]
 
-        # Ensure file path is valid and absolute
         if not file_path or not os.path.exists(file_path):
-            print(f"DEBUG: Skipping object {obj} - source file path '{file_path}' not found or invalid.")
+            log.debug("Skipping object %s - source file path '%s' not found or invalid.", obj, file_path)
             return None, None, None
 
         return source_code, os.path.abspath(file_path), start_line
     except (TypeError, OSError, IOError) as e:
-        # TypeError: Built-ins, C extensions, dynamically created etc.
-        # OSError/IOError: Source file not found/readable
-        print(f"DEBUG: Could not get source for {obj}: {type(e).__name__} - {e}")
+        log.debug("Could not get source for %s: %s - %s", obj, type(e).__name__, e)
         return None, None, None

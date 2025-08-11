@@ -99,13 +99,14 @@ class DependencyBundler:
     """
     MAX_PROCESSED = 1000
 
-    def __init__(self):
+    def __init__(self, exclude_third_party=False):
         """
         Initializes the DependencyBundler, setting up the state for a new analysis run.
         """
         self.processed_object_ids = set()
         self.collected_source = {}
         self.objects_to_process = deque()
+        self.exclude_third_party = exclude_third_party
 
     def find_and_queue_dependencies(self, obj, obj_globals):
         """
@@ -182,7 +183,8 @@ class DependencyBundler:
             log.debug("Error getting module for dependency %s: %s", dep_obj, e)
             return
 
-        if not should_include_module(module, exclude_list=EXCLUDE_PACKAGES):
+        if not should_include_module(module, exclude_list=EXCLUDE_PACKAGES,
+                                     exclude_third_party=self.exclude_third_party):
             return
 
         source_code, src_file, start_line = get_object_source(dep_obj)

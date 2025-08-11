@@ -255,3 +255,27 @@ def test_function_with_third_party_dependency(fixture_paths):
         'UsageError'
     }
     assert all_found_qualnames == expected_qualnames
+
+
+def test_function_with_third_party_dependency_excluded(fixture_paths):
+    """Test that third-party dependencies are excluded when the flag is set."""
+    target_obj = load_target_function(fixture_paths['module_with_third_party_imports'],
+                                      "function_with_third_party_dependency")
+    assert target_obj is not None
+
+    # Enable the exclusion of third-party modules
+    bundler = DependencyBundler(exclude_third_party=True)
+    collected = bundler.run_dependency_analysis(target_obj)
+    collected_qualnames = get_collected_qualnames(collected)
+
+    # The only thing collected should be the target function itself,
+    # as its only dependency is a third-party module which should be excluded.
+    expected_qualnames = {
+        (fixture_paths['module_with_third_party_imports'], "function_with_third_party_dependency"),
+    }
+
+    assert collected_qualnames == expected_qualnames
+
+    # Explicitly check that no modules from 'site-packages' were included
+    for path, _ in collected.keys():
+        assert 'site-packages' not in path

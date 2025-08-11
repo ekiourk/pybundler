@@ -2,10 +2,19 @@
 
 import argparse
 import datetime
+import logging
 import sys
 
 from pybundler.core_functions import parse_target_string, load_target_function
-from pybundler.dependency_bundler import collected_source, run_dependency_analysis
+from pybundler.dependency_bundler import DependencyBundler
+
+log = logging.getLogger(__name__)
+
+
+def setup_logging(log_level):
+    """Configure the root logger."""
+    level = getattr(logging, log_level.upper(), logging.INFO)
+    logging.basicConfig(level=level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 
 def join_all_sources(sources):
@@ -28,7 +37,15 @@ def main():
         help="Path to the output file for bundled source code.",
         default="bundler_output.py"
     )
+    parser.add_argument(
+        "--log-level",
+        default="info",
+        choices=["debug", "info", "warning", "error", "critical"],
+        help="Set the logging level (default: info)."
+    )
     args = parser.parse_args()
+
+    setup_logging(args.log_level)
 
     # 1. Parse Input
     module_path, target_name = parse_target_string(args.target)
@@ -41,26 +58,25 @@ def main():
         sys.exit(1)
 
     # 3. *** Run the core analysis using the dedicated function ***
-    run_dependency_analysis(initial_target_obj)
+    bundler = DependencyBundler()
+    collected_source = bundler.run_dependency_analysis(initial_target_obj)
 
-    # 4. Collate and Output (operates on the global collected_source)
+    # 4. Collate and Output
     if not collected_source:
-        print("Warning: No source code was collected.")
-        # Handle writing empty file as before...
+        log.warning("No source code was collected.")
         try:
             with open(args.output, 'w', encoding='utf-8') as f:
                 f.write(f"# No Python source dependencies found for "
                         f"{args.target} at {datetime.datetime.now().isoformat()}\n")
-            print(f"Wrote empty marker file to: {args.output}")
+            log.info("Wrote empty marker file to: %s", args.output)
         except IOError as e:
-            print(f"Error: Failed to write empty output file '{args.output}': {e}", file=sys.stderr)
+            log.error("Failed to write empty output file '%s': %s", args.output, e)
             sys.exit(1)
         sys.exit(0)
 
     all_code = join_all_sources(collected_source)
 
     # 5. Write Output
-    # Add a header to the final output file
     output_header = f"""#################################################################
     # Bundled Python code for target: {args.target}
     # Generated on: {datetime.datetime.now(datetime.timezone.utc).isoformat()}
@@ -76,9 +92,9 @@ def main():
     try:
         with open(args.output, 'w', encoding='utf-8') as f:
             f.write(final_output)
-        print(f"Successfully wrote bundled source code to: {args.output}")
+        log.info("Successfully wrote bundled source code to: %s", args.output)
     except IOError as e:
-        print(f"Error: Failed to write output file '{args.output}': {e}", file=sys.stderr)
+        log.error("Failed to write output file '%s': %s", args.output, e)
         sys.exit(1)
 
 

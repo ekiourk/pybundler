@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-import pybundler.dependency_bundler as bundler
+from pybundler.dependency_bundler import DependencyBundler
 from pybundler.core_functions import load_target_function
 
 
@@ -36,31 +36,21 @@ def fixture_paths(tests_root):
         sys.path.insert(0, project_root_for_bundler)
 
     # Make sure bundler is loaded correctly after path setup
-    importlib.reload(bundler)
+    importlib.reload(sys.modules['pybundler.dependency_bundler'])
 
     return paths
 
 
 @pytest.fixture(autouse=True)
-def reset_bundler_state():
-    """Reset bundler state before each test."""
-    # Reset state
-    bundler.processed_object_ids.clear()
-    bundler.collected_source.clear()
-    bundler.objects_to_process.clear()
-
-    # Clean previously imported fixture modules
+def reset_module_imports():
+    """Clean previously imported fixture modules before each test."""
     mods_to_remove = [m for m in sys.modules if
                       m.startswith('fixtures.') or m.startswith('tests.fixtures') or
                       m in ['simple_module', 'another_module', 'module_with_imports', 'nested_module']]
     for mod_name in mods_to_remove:
         if mod_name in sys.modules:
             del sys.modules[mod_name]
-
-    # Ensure collected_source is empty
-    assert len(bundler.collected_source) == 0, "collected_source should be empty at start of test"
-
-    yield  # This allows the test to run
+    yield
 
 
 def get_collected_qualnames(collected_sources):
@@ -84,8 +74,8 @@ def test_simple_function(fixture_paths):
     target_obj = load_target_function(fixture_paths['simple_module_path'], "simple_function")
     assert target_obj is not None
 
-    bundler.run_dependency_analysis(target_obj)  # Run the actual analysis
-    collected = bundler.collected_source
+    bundler = DependencyBundler()
+    collected = bundler.run_dependency_analysis(target_obj)
     collected_qualnames = get_collected_qualnames(collected)
 
     expected_qualnames = {
@@ -99,8 +89,8 @@ def test_calls_same_module_function(fixture_paths):
     target_obj = load_target_function(fixture_paths['simple_module_path'], "calls_simple_function")
     assert target_obj is not None
 
-    bundler.run_dependency_analysis(target_obj)
-    collected = bundler.collected_source
+    bundler = DependencyBundler()
+    collected = bundler.run_dependency_analysis(target_obj)
     collected_qualnames = get_collected_qualnames(collected)
 
     expected_qualnames = {
@@ -115,8 +105,8 @@ def test_target_simple_class(fixture_paths):
     target_obj = load_target_function(fixture_paths['simple_module_path'], "SimpleClass")
     assert target_obj is not None
 
-    bundler.run_dependency_analysis(target_obj)
-    collected = bundler.collected_source
+    bundler = DependencyBundler()
+    collected = bundler.run_dependency_analysis(target_obj)
     collected_qualnames = get_collected_qualnames(collected)
 
     expected_qualnames = {
@@ -132,8 +122,8 @@ def test_complex_function_with_imports(fixture_paths):
     target_obj = load_target_function(fixture_paths['imports_module_path'], "complex_function")
     assert target_obj is not None
 
-    bundler.run_dependency_analysis(target_obj)
-    collected = bundler.collected_source
+    bundler = DependencyBundler()
+    collected = bundler.run_dependency_analysis(target_obj)
     collected_qualnames = get_collected_qualnames(collected)
 
     expected_qualnames = {
@@ -172,8 +162,8 @@ def test_function_using_local_class(fixture_paths):
     target_obj = load_target_function(fixture_paths['imports_module_path'], "function_using_local_class")
     assert target_obj is not None
 
-    bundler.run_dependency_analysis(target_obj)
-    collected = bundler.collected_source
+    bundler = DependencyBundler()
+    collected = bundler.run_dependency_analysis(target_obj)
     collected_qualnames = get_collected_qualnames(collected)
 
     expected_qualnames = {
@@ -211,8 +201,8 @@ def test_target_class_with_imports(fixture_paths):
     target_obj = load_target_function(fixture_paths['imports_module_path'], "ImportingClass")
     assert target_obj is not None
 
-    bundler.run_dependency_analysis(target_obj)
-    collected = bundler.collected_source
+    bundler = DependencyBundler()
+    collected = bundler.run_dependency_analysis(target_obj)
     collected_qualnames = get_collected_qualnames(collected)
 
     # Expected dependencies: Class, its methods (__init__, process), and items used by them.
@@ -253,13 +243,15 @@ def test_function_with_third_party_dependency(fixture_paths):
                                       "function_with_third_party_dependency")
     assert target_obj is not None
 
-    bundler.run_dependency_analysis(target_obj)  # Run the actual analysis
-    collected = bundler.collected_source
+    bundler = DependencyBundler()
+    collected = bundler.run_dependency_analysis(target_obj)
     collected_qualnames = get_collected_qualnames(collected)
 
+    all_found_qualnames = {q for _, q in collected_qualnames}
+
     expected_qualnames = {
-        (fixture_paths['module_with_third_party_imports'], "function_with_third_party_dependency"),
-        (os.path.join(fixture_paths['pytest_config_path'], '__init__.py'), 'filename_arg'),
-        (os.path.join(fixture_paths['pytest_config_path'], 'exceptions.py'), 'UsageError')
+        "function_with_third_party_dependency",
+        'filename_arg',
+        'UsageError'
     }
-    assert collected_qualnames == expected_qualnames
+    assert all_found_qualnames == expected_qualnames

@@ -43,6 +43,11 @@ def main():
         choices=["debug", "info", "warning", "error", "critical"],
         help="Set the logging level (default: info)."
     )
+    parser.add_argument(
+        "--no-third-party",
+        action="store_true",
+        help="If set, third-party packages from site-packages will not be included in the bundle."
+    )
     args = parser.parse_args()
 
     setup_logging(args.log_level)
@@ -58,7 +63,7 @@ def main():
         sys.exit(1)
 
     # 3. *** Run the core analysis using the dedicated function ***
-    bundler = DependencyBundler()
+    bundler = DependencyBundler(exclude_third_party=args.no_third_party)
     collected_source = bundler.run_dependency_analysis(initial_target_obj)
 
     # 4. Collate and Output

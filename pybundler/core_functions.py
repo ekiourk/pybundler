@@ -92,39 +92,47 @@ def is_standard_library(module_obj):
     Returns True if it IS part of stdlib/builtin, False otherwise (local/third-party).
     """
     if not isinstance(module_obj, ModuleType):
-        return False  # Not a module we can analyze this way
+        return False
 
     mod_name = module_obj.__name__
 
-    # 1. Check true built-ins first (most reliable)
     if mod_name in sys.builtin_module_names:
         log.debug("Module '%s' is built-in.", mod_name)
         return True
 
-    # 2. Get the module's file path
     mod_file_abs = get_module_file_path(module_obj)
     if mod_file_abs is None:
-        return False  # Cannot determine path, assume not stdlib
-
-    if 'site-packages' in mod_file_abs:
         return False
 
     stdlib_paths = get_stdlib_paths()
-    # 3. Check if the module's file path is within any of the identified stdlib directories
     if not stdlib_paths:
         log.warning("Cannot check stdlib paths for %s. Assuming non-stdlib.", mod_name)
-        return False  # Cannot perform check
+        return False
 
     for std_path in stdlib_paths:
-        # Check if the module file is *inside* the standard library path
-        # Using startswith is generally safe and efficient
         if mod_file_abs.startswith(std_path + os.sep):
             log.debug("Module '%s' (%s) is within standard library path '%s'.", mod_name, mod_file_abs, std_path)
             return True
 
-    # 4. If not built-in and not in standard library paths, assume it's local or third-party
     log.debug("Module '%s' (%s) considered local or third-party.", mod_name, mod_file_abs)
     return False
+
+
+def is_third_party_module(module_obj):
+    """
+    Checks if a module is a third-party module (i.e., installed in site-packages).
+    """
+    if not isinstance(module_obj, ModuleType):
+        return False
+
+    mod_file_abs = get_module_file_path(module_obj)
+    if mod_file_abs is None:
+        return False
+
+    is_third_party = 'site-packages' in mod_file_abs
+    if is_third_party:
+        log.debug("Module '%s' (%s) is a third-party module.", module_obj.__name__, mod_file_abs)
+    return is_third_party
 
 
 def is_package_included(module_name, include_list=None, exclude_list=None):
@@ -159,34 +167,20 @@ def is_package_included(module_name, include_list=None, exclude_list=None):
         return True
 
 
-def should_include_module(module_obj, include_list=None, exclude_list=None):
+def should_include_module(module_obj, include_list=None, exclude_list=None, exclude_third_party=False):
     """
-    Determines if a module should be included based on standard library status
-    and inclusion/exclusion lists.
-
-    Args:
-        module_obj: The module object to check
-        include_list: Optional list of package names to include
-        exclude_list: Optional list of package names to exclude
-
-    Returns:
-        bool: True if the module should be included, False otherwise
-
-    Note:
-        - Standard library modules are always excluded (returns False)
-        - Cannot have both include_list and exclude_list defined simultaneously
-        - If include_list is provided, only modules from those packages are included
-        - If exclude_list is provided, modules from those packages are excluded
-        - If neither list is provided, all non-stdlib modules are included
+    Determines if a module should be included based on standard library status,
+    third-party status, and inclusion/exclusion lists.
     """
     if not isinstance(module_obj, ModuleType):
         return False
 
-    # First check if it's a standard library module - always exclude these
     if is_standard_library(module_obj):
         return False
 
-    # Apply the inclusion/exclusion logic
+    if exclude_third_party and is_third_party_module(module_obj):
+        return False
+
     return is_package_included(module_obj.__name__, include_list, exclude_list)
 
 

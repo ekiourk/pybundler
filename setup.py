@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='pybundler',
-    version='0.1.0',
+    version='0.1.5',
     packages=find_packages(exclude=['tests*']),
     install_requires=[],  # Add any dependencies your project might have here
     author='Your Name',

@@ -84,6 +84,32 @@ def test_simple_function(fixture_paths):
     assert collected_qualnames == expected_qualnames
 
 
+def test_decorator_factory_function(fixture_paths):
+    """Target: a function decorated with a decorator returned by a factory."""
+    module_path = os.path.join(os.path.dirname(fixture_paths['simple_module_path']), 'module_with_decorator_factory.py')
+    target_obj = load_target_function(module_path, "top_level_function")
+    assert target_obj is not None
+
+    bundler = DependencyBundler()
+    collected = bundler.run_dependency_analysis(target_obj)
+    collected_qualnames = get_collected_qualnames(collected)
+
+    expected_qualnames = {
+        (module_path, "top_level_function"),
+        (module_path, "final_dependency"),
+        (module_path, "decorator_factory"),
+        (module_path, "command_decorator"),
+        (module_path, "Command"),
+        (module_path, "Command.__init__"),
+        (module_path, "Command.__call__"),
+        (module_path, "CliGroup"),
+    }
+
+    # Using issubset because the bundler might find extra local functions
+    # from the decorator factory, which is acceptable.
+    assert expected_qualnames.issubset(collected_qualnames)
+
+
 def test_calls_same_module_function(fixture_paths):
     """Target: calls_simple_function. Expected: Both functions from simple_module."""
     target_obj = load_target_function(fixture_paths['simple_module_path'], "calls_simple_function")
@@ -279,3 +305,44 @@ def test_function_with_third_party_dependency_excluded(fixture_paths):
     # Explicitly check that no modules from 'site-packages' were included
     for path, _ in collected.keys():
         assert 'site-packages' not in path
+
+
+def test_decorated_function(fixture_paths):
+    """Target: decorated_function. Expected: Decorator, function, and its dependency."""
+    module_path = os.path.join(os.path.dirname(fixture_paths['simple_module_path']), 'module_with_decorator.py')
+    target_obj = load_target_function(module_path, "decorated_function")
+    assert target_obj is not None
+
+    bundler = DependencyBundler()
+    collected = bundler.run_dependency_analysis(target_obj)
+    collected_qualnames = get_collected_qualnames(collected)
+
+    expected_qualnames = {
+        (module_path, "simple_decorator"),
+        (module_path, "decorated_function"),
+        (module_path, "undecorated_dependency"),
+        (module_path, "simple_decorator.<locals>.wrapper"),
+    }
+    assert collected_qualnames == expected_qualnames
+
+
+def test_complex_decorated_function(fixture_paths):
+    """Target: a function decorated with a complex decorator that wraps it in an object."""
+    module_path = os.path.join(os.path.dirname(fixture_paths['simple_module_path']), 'module_with_complex_decorator.py')
+    target_obj = load_target_function(module_path, "complex_decorated_function")
+    assert target_obj is not None
+
+    bundler = DependencyBundler()
+    collected = bundler.run_dependency_analysis(target_obj)
+    collected_qualnames = get_collected_qualnames(collected)
+
+    expected_qualnames = {
+        (module_path, "complex_decorated_function"),
+        (module_path, "complex_dependency"),
+        (module_path, "complex_decorator"),
+        (module_path, "ComplexCommand"),
+        (module_path, "ComplexCommand.__init__"),
+        (module_path, "ComplexCommand.__call__"),
+    }
+
+    assert collected_qualnames == expected_qualnames

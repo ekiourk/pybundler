@@ -187,15 +187,19 @@ def should_include_module(module_obj, include_list=None, exclude_list=None, excl
 
 def parse_target_string(target_str):
     """
-    Parses 'path/to/module.py:function_name' into (absolute_path, function_name).
-    Returns (None, None) on error.
+    Parses 'path/to/module.py:function_name' or 'path/to/module.py'.
+    Returns (absolute_path, object_name|None).
     """
     log.debug("Parsing target string: %s", target_str)
-    if ':' not in target_str:
-        log.error("Target format invalid. Expected 'path/to/module.py:function_name'. Got: %s", target_str)
+    if ':' in target_str:
+        path_str, name = target_str.rsplit(':', 1)
+    elif target_str.endswith('.py'):
+        path_str = target_str
+        name = None
+    else:
+        log.error("Target format invalid. Expected 'path/to/module.py:function_name' or 'path/to/module.py'. Got: %s", target_str)
         return None, None
 
-    path_str, name = target_str.rsplit(':', 1)
     abs_path = os.path.abspath(path_str)
 
     if not abs_path.endswith(".py"):
@@ -205,12 +209,14 @@ def parse_target_string(target_str):
     return abs_path, name
 
 
-def load_target_function(module_path, function_name):
+def _load_module_from_path(module_path):
     """
-    Dynamically loads a module from its path and returns the specified function object.
-    Returns None on error. Assumes module_path is absolute.
+    Helper to dynamically load a module from its file path.
+    Returns the module object or None on error.
+    NOTE: This function modifies sys.path and does not clean it up,
+    as the paths may be needed for later dependency analysis.
     """
-    log.debug("Loading function '%s' from module '%s'", function_name, module_path)
+    log.debug("Loading module from path: '%s'", module_path)
     if not os.path.isfile(module_path):
         log.error("Module file not found at %s", module_path)
         return None
@@ -233,53 +239,92 @@ def load_target_function(module_path, function_name):
 
         module_dir = os.path.dirname(module_path)
         paths_to_add = [module_dir]
-        paths_to_remove = []
 
-        # Add site-packages directories to sys.path to find third-party libraries
         for site_packages_path in site.getsitepackages():
             if site_packages_path not in sys.path:
                 paths_to_add.append(site_packages_path)
 
-        # Add paths that are not already in sys.path
         for p in paths_to_add:
             if p not in sys.path:
                 sys.path.insert(0, p)
-                paths_to_remove.append(p)
 
-        try:
-            spec.loader.exec_module(module)
-        finally:
-            # Clean up sys.path
-            for p in paths_to_remove:
-                if p in sys.path:
-                    sys.path.remove(p)
+        spec.loader.exec_module(module)
+        log.debug("Successfully loaded module: %s", module)
+        return module
 
-        target_obj = getattr(module, function_name, None)
-        if target_obj is None:
-            log.error("Target '%s' not found in module '%s'", function_name, module_path)
-            return None
-
-        if target_obj is None:
-            log.error("Target '%s' not found in module '%s'", function_name, module_path)
-            return None
-
-        # The target object must be callable (function, class, or a callable object)
-        if not callable(target_obj):
-            log.error("Target '%s' in module '%s' is not a callable object.", function_name, module_path)
-            return None
-
-        log.debug("Successfully loaded %s", target_obj)
-        return target_obj
-
-    except FileNotFoundError:
-        log.error("Module file not found at %s", module_path)
-        return None
-    except SyntaxError as e:
-        log.error("Syntax error in module %s: %s", module_path, e)
-        return None
     except Exception as e:
-        log.error("Error loading module or function from %s: %s - %s", module_path, type(e).__name__, e)
+        log.error("Error loading module from %s: %s - %s", module_path, type(e).__name__, e)
         return None
+
+
+def load_target_objects(module_path, target_name):
+    """
+    Dynamically loads a module and returns a list of target objects.
+    If target_name is specified, returns a list with that single object.
+    If target_name is None, returns a list of all functions/classes defined in the module.
+    Returns an empty list on error.
+    """
+    module = _load_module_from_path(module_path)
+    if not module:
+        return []
+
+    if target_name:
+        target_obj = getattr(module, target_name, None)
+        if target_obj is None:
+            log.error("Target '%s' not found in module '%s'", target_name, module_path)
+            return []
+        if not callable(target_obj):
+            log.error("Target '%s' in module '%s' is not a callable object.", target_name, module_path)
+            return []
+        log.debug("Successfully loaded single target: %s", target_obj)
+        return [target_obj]
+    else:
+        targets = []
+        try:
+            module_file = inspect.getsourcefile(module)
+        except TypeError:
+            log.error("Cannot get source file for module %s. Cannot discover objects.", module_path)
+            return []
+
+        for name, obj in inspect.getmembers(module):
+            if not isinstance(obj, (FunctionType, MethodType, type)):
+                continue
+
+            try:
+                if inspect.getsourcefile(obj) != module_file:
+                    continue
+            except (TypeError, OSError):
+                continue
+
+            targets.append(obj)
+
+        log.debug("Found %d targets in module '%s': %s",
+                  len(targets), module_path, [getattr(t, '__name__', str(t)) for t in targets])
+        return targets
+
+
+def load_target_function(module_path, function_name):
+    """
+    Dynamically loads a module from its path and returns the specified function object.
+    Returns None on error. Assumes module_path is absolute.
+    DEPRECATED: Use load_target_objects instead.
+    """
+    log.debug("Loading function '%s' from module '%s'", function_name, module_path)
+    module = _load_module_from_path(module_path)
+    if not module:
+        return None
+
+    target_obj = getattr(module, function_name, None)
+    if target_obj is None:
+        log.error("Target '%s' not found in module '%s'", function_name, module_path)
+        return None
+
+    if not callable(target_obj):
+        log.error("Target '%s' in module '%s' is not a callable object.", function_name, module_path)
+        return None
+
+    log.debug("Successfully loaded %s", target_obj)
+    return target_obj
 
 
 def get_object_source(obj):

@@ -172,6 +172,19 @@ class DependencyBundler:
             return
 
         if not isinstance(dep_obj, (FunctionType, MethodType, type)):
+            # The dependency is an instance of a class. We should try to process
+            # the class itself.
+            dep_type = type(dep_obj)
+            try:
+                # We check if the class's module is one we should include, to avoid
+                # bundling the classes of built-in objects like integers or strings.
+                module = inspect.getmodule(dep_type)
+                if module and should_include_module(module, exclude_list=EXCLUDE_PACKAGES,
+                                                     exclude_third_party=self.exclude_third_party):
+                    log.debug("Processing class '%s' from instance dependency.", dep_type.__name__)
+                    self.process_dependency(dep_type)
+            except Exception as e:
+                log.debug("Could not process class for instance dependency %s: %s", dep_obj, e)
             return
 
         try:
@@ -219,6 +232,24 @@ class DependencyBundler:
                 continue
 
             self.processed_object_ids.add(obj_id)
+
+            # To handle decorated functions, we need to unwrap them. We check for
+            # common attributes that point to the original function. This handles
+            # decorators that create wrapper objects and those that use functools.wraps.
+            if not isinstance(current_obj, type):  # Don't check attributes on classes
+                for attr in ['__wrapped__', 'callback', 'func', 'function']:
+                    if hasattr(current_obj, attr):
+                        wrapped_func = getattr(current_obj, attr)
+                        if callable(wrapped_func):
+                            log.debug("Found potential wrapped function in attribute '%s': %s", attr, wrapped_func)
+                            self.process_dependency(wrapped_func)
+
+            # If the object is a function/method, also check its closure for other functions/classes.
+            if isinstance(current_obj, (FunctionType, MethodType)) and hasattr(current_obj, '__closure__'):
+                if current_obj.__closure__:
+                    for cell in current_obj.__closure__:
+                        closed_obj = cell.cell_contents
+                        self.process_dependency(closed_obj)
 
             source_code, file_path, start_line = get_object_source(current_obj)
             if source_code and file_path and start_line:

@@ -2,6 +2,7 @@ import importlib.util
 import inspect
 import logging
 import os
+import site
 import sys
 import sysconfig
 from types import ModuleType, FunctionType, MethodType
@@ -231,23 +232,40 @@ def load_target_function(module_path, function_name):
         sys.modules[unique_module_name] = module
 
         module_dir = os.path.dirname(module_path)
-        path_needs_cleanup = False
-        if module_dir not in sys.path:
-            sys.path.insert(0, module_dir)
-            path_needs_cleanup = True
+        paths_to_add = [module_dir]
+        paths_to_remove = []
 
-        spec.loader.exec_module(module)
+        # Add site-packages directories to sys.path to find third-party libraries
+        for site_packages_path in site.getsitepackages():
+            if site_packages_path not in sys.path:
+                paths_to_add.append(site_packages_path)
 
-        if path_needs_cleanup and sys.path[0] == module_dir:
-            sys.path.pop(0)
+        # Add paths that are not already in sys.path
+        for p in paths_to_add:
+            if p not in sys.path:
+                sys.path.insert(0, p)
+                paths_to_remove.append(p)
+
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            # Clean up sys.path
+            for p in paths_to_remove:
+                if p in sys.path:
+                    sys.path.remove(p)
 
         target_obj = getattr(module, function_name, None)
         if target_obj is None:
             log.error("Target '%s' not found in module '%s'", function_name, module_path)
             return None
 
-        if not isinstance(target_obj, (FunctionType, MethodType, type)):
-            log.error("Target '%s' in module '%s' is not a function, method, or class.", function_name, module_path)
+        if target_obj is None:
+            log.error("Target '%s' not found in module '%s'", function_name, module_path)
+            return None
+
+        # The target object must be callable (function, class, or a callable object)
+        if not callable(target_obj):
+            log.error("Target '%s' in module '%s' is not a callable object.", function_name, module_path)
             return None
 
         log.debug("Successfully loaded %s", target_obj)

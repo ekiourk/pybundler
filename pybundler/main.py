@@ -5,7 +5,7 @@ import datetime
 import logging
 import sys
 
-from pybundler.core_functions import parse_target_string, load_target_function
+from pybundler.core_functions import parse_target_string, load_target_objects
 from pybundler.dependency_bundler import DependencyBundler
 
 log = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def main():
     )
     parser.add_argument(
         "target",
-        help="Target in format 'path/to/module.py:function_or_class_name'",
+        help="Target in format 'path/to/module.py:function_or_class_name' or 'path/to/module.py'",
     )
     parser.add_argument(
         "-o", "--output",
@@ -54,17 +54,24 @@ def main():
 
     # 1. Parse Input
     module_path, target_name = parse_target_string(args.target)
-    if not module_path or not target_name:
+    if not module_path:
+        log.error("Could not parse module path from target: %s", args.target)
         sys.exit(1)
 
-    # 2. Load Target Object (Function or Class)
-    initial_target_obj = load_target_function(module_path, target_name)
-    if not initial_target_obj:
+    # 2. Load Target Object(s)
+    initial_target_objs = load_target_objects(module_path, target_name)
+    if not initial_target_objs:
+        log.error("No target objects found in '%s'.", args.target)
         sys.exit(1)
 
     # 3. *** Run the core analysis using the dedicated function ***
     bundler = DependencyBundler(exclude_third_party=args.no_third_party)
-    collected_source = bundler.run_dependency_analysis(initial_target_obj)
+
+    start_obj = initial_target_objs.pop(0)
+    for obj in initial_target_objs:
+        bundler.process_dependency(obj)
+
+    collected_source = bundler.run_dependency_analysis(start_obj)
 
     # 4. Collate and Output
     if not collected_source:
